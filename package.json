@@ -1,0 +1,43 @@
+{
+  "name": "nimbusflow",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Serverless event-driven data pipeline on AWS (API Gateway -> Lambda -> SQS -> Step Functions -> DynamoDB -> SNS)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "sam build",
+    "validate": "sam validate --lint",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write \"**/*.{ts,json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md,yaml,yml}\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node tests/integration/smoke.mjs"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sfn": "^3.699.0",
+    "@aws-sdk/client-sns": "^3.699.0",
+    "@aws-sdk/client-sqs": "^3.699.0",
+    "@aws-sdk/lib-dynamodb": "^3.699.0",
+    "@aws-sdk/client-dynamodb": "^3.699.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "@types/aws-lambda": "^8.10.145",
+    "@types/node": "^22.9.0",
+    "aws-sdk-client-mock": "^4.1.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.15.0",
+    "vitest": "^2.1.5"
+  }
+}

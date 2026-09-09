@@ -1,0 +1,25 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "nimbusflow"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+resolve_s3 = true
+fail_on_empty_changeset = false
+# Overwritten by `sam deploy --guided`; NotificationEmail must be your own address.
+parameter_overrides = "NotificationEmail=\"you@example.com\" LogLevel=\"info\""
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+
+[default.delete.parameters]
+no_prompts = false

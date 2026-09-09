@@ -1,0 +1,646 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  NimbusFlow (spec 1.1) - serverless event-driven data pipeline.
+  API Gateway -> Ingest -> SQS -> Process -> Step Functions -> DynamoDB -> SNS.
+  One stack, no EventBridge, no X-Ray, no S3, no custom domain. Idle cost is $0.
+
+Parameters:
+  NotificationEmail:
+    Type: String
+    Description: Email subscribed to the NimbusFlow topic (completions + both alarms).
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    ConstraintDescription: Must be a valid email address.
+  LogLevel:
+    Type: String
+    Description: Application log level for every function.
+    Default: info
+    AllowedValues: [debug, info, warn, error]
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 10
+    # X-Ray is deliberately out of scope - observability is JSON logs + two alarms.
+    Tracing: Disabled
+    Environment:
+      Variables:
+        LOG_LEVEL: !Ref LogLevel
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Data layer - single table, on-demand, TTL. No streams, no S3.
+  # ---------------------------------------------------------------------------
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "${AWS::StackName}-events"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ---------------------------------------------------------------------------
+  # Messaging - queue + DLQ for poison messages, one SNS topic for email
+  # ---------------------------------------------------------------------------
+  EventsDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-events-dlq"
+      MessageRetentionPeriod: 1209600 # 14 days - the maximum, so nothing is lost quietly
+
+  EventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-events"
+      # Comfortably above the Process function timeout (10s).
+      VisibilityTimeout: 60
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EventsDlq.Arn
+        maxReceiveCount: 3
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-alerts"
+      DisplayName: NimbusFlow
+
+  AlertTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # ---------------------------------------------------------------------------
+  # Log groups - created here so retention is 7 days from the first invocation
+  # ---------------------------------------------------------------------------
+  IngestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-ingest"
+      RetentionInDays: 7
+
+  ProcessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-process"
+      RetentionInDays: 7
+
+  ValidateLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-validate"
+      RetentionInDays: 7
+
+  EnrichLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-enrich"
+      RetentionInDays: 7
+
+  StoreLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-store"
+      RetentionInDays: 7
+
+  NotifyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-notify"
+      RetentionInDays: 7
+
+  QueryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-query"
+      RetentionInDays: 7
+
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-pipeline"
+      RetentionInDays: 7
+
+  # ---------------------------------------------------------------------------
+  # IAM - one role per function, explicit actions, no wildcard resource ARNs.
+  # Roles are written out rather than using SAM policy templates so each grant
+  # is auditable against the IAM table in the README.
+  # ---------------------------------------------------------------------------
+  IngestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-ingest-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt IngestLogGroup.Arn
+        - PolicyName: enqueue-and-record
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt EventsQueue.Arn
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt EventsTable.Arn
+
+  ProcessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-process-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ProcessLogGroup.Arn
+        - PolicyName: consume-queue-and-start-workflow
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Required by the SQS event source mapping, not by handler code.
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt EventsQueue.Arn
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref PipelineStateMachine
+
+  ValidateRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-validate-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt ValidateLogGroup.Arn
+
+  EnrichRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-enrich-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt EnrichLogGroup.Arn
+
+  StoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-store-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt StoreLogGroup.Arn
+        - PolicyName: write-events
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt EventsTable.Arn
+
+  NotifyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-notify-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt NotifyLogGroup.Arn
+        - PolicyName: publish
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
+
+  QueryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-query-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: logs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !GetAtt QueryLogGroup.Arn
+        - PolicyName: read-events
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:Query]
+                Resource: !GetAtt EventsTable.Arn
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-pipeline-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-task-functions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt ValidateFunction.Arn
+                  - !GetAtt EnrichFunction.Arn
+                  - !GetAtt StoreFunction.Arn
+                  - !GetAtt NotifyFunction.Arn
+        - PolicyName: handle-failure
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # HandleFailure / NotifyFailure use native SDK integrations, so the
+              # state machine itself needs these two grants.
+              - Effect: Allow
+                Action: dynamodb:UpdateItem
+                Resource: !GetAtt EventsTable.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertTopic
+        - PolicyName: execution-logging
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # AWS requires "*" for the log-delivery APIs used by Step Functions
+              # logging; these actions do not accept a resource ARN.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+
+  # ---------------------------------------------------------------------------
+  # API layer - default HTTP API URL, no custom domain, no authorizer
+  # ---------------------------------------------------------------------------
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-ingest"
+      CodeUri: ./
+      Handler: functions/ingest/handler.handler
+      Role: !GetAtt IngestRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref IngestLogGroup
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+          EVENTS_QUEUE_URL: !Ref EventsQueue
+      Events:
+        PostEvent:
+          Type: HttpApi
+          Properties:
+            Path: /api/events
+            Method: POST
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/ingest/handler.ts]
+
+  QueryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-query"
+      CodeUri: ./
+      Handler: functions/query/handler.handler
+      Role: !GetAtt QueryRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref QueryLogGroup
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+      Events:
+        GetEvent:
+          Type: HttpApi
+          Properties:
+            Path: /api/events/{id}
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/query/handler.ts]
+
+  # ---------------------------------------------------------------------------
+  # Queue consumer
+  # ---------------------------------------------------------------------------
+  ProcessFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-process"
+      CodeUri: ./
+      Handler: functions/process/handler.handler
+      Role: !GetAtt ProcessRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ProcessLogGroup
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref PipelineStateMachine
+      Events:
+        QueueMessage:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EventsQueue.Arn
+            BatchSize: 5
+            FunctionResponseTypes: [ReportBatchItemFailures]
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/process/handler.ts]
+
+  # ---------------------------------------------------------------------------
+  # Workflow task functions
+  # ---------------------------------------------------------------------------
+  ValidateFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-validate"
+      CodeUri: ./
+      Handler: functions/validate/handler.handler
+      Role: !GetAtt ValidateRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref ValidateLogGroup
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/validate/handler.ts]
+
+  EnrichFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-enrich"
+      CodeUri: ./
+      Handler: functions/enrich/handler.handler
+      Role: !GetAtt EnrichRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref EnrichLogGroup
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/enrich/handler.ts]
+
+  StoreFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-store"
+      CodeUri: ./
+      Handler: functions/store/handler.handler
+      Role: !GetAtt StoreRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref StoreLogGroup
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTable
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/store/handler.ts]
+
+  NotifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-notify"
+      CodeUri: ./
+      Handler: functions/notify/handler.handler
+      Role: !GetAtt NotifyRole.Arn
+      LoggingConfig:
+        LogGroup: !Ref NotifyLogGroup
+      Environment:
+        Variables:
+          ALERT_TOPIC_ARN: !Ref AlertTopic
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Format: cjs
+        Target: es2022
+        Minify: false
+        Sourcemap: false
+        EntryPoints: [functions/notify/handler.ts]
+
+  # ---------------------------------------------------------------------------
+  # Orchestration - Standard workflow. Demo by hand: 4,000 free transitions/month.
+  # ---------------------------------------------------------------------------
+  PipelineStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub "${AWS::StackName}-pipeline"
+      Type: STANDARD
+      DefinitionUri: statemachine/pipeline.asl.json
+      Role: !GetAtt StateMachineRole.Arn
+      DefinitionSubstitutions:
+        ValidateFunctionArn: !GetAtt ValidateFunction.Arn
+        EnrichFunctionArn: !GetAtt EnrichFunction.Arn
+        StoreFunctionArn: !GetAtt StoreFunction.Arn
+        NotifyFunctionArn: !GetAtt NotifyFunction.Arn
+        EventsTableName: !Ref EventsTable
+        AlertTopicArn: !Ref AlertTopic
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+        IncludeExecutionData: true
+        Level: ALL
+
+  # ---------------------------------------------------------------------------
+  # Observability - exactly two alarms, both to SNS email
+  # ---------------------------------------------------------------------------
+  LambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-lambda-errors"
+      AlarmDescription: Ingest or Process reported a Lambda error. Workflow failures arrive by SNS instead.
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      EvaluationPeriods: 1
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      Metrics:
+        - Id: ingest_errors
+          ReturnData: false
+          MetricStat:
+            Period: 300
+            Stat: Sum
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref IngestFunction
+        - Id: process_errors
+          ReturnData: false
+          MetricStat:
+            Period: 300
+            Stat: Sum
+            Metric:
+              Namespace: AWS/Lambda
+              MetricName: Errors
+              Dimensions:
+                - Name: FunctionName
+                  Value: !Ref ProcessFunction
+        - Id: entrypoint_errors
+          Label: Ingest + Process errors
+          Expression: ingest_errors + process_errors
+          ReturnData: true
+
+  DlqDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-dlq-depth"
+      AlarmDescription: A message reached the dead-letter queue after 3 failed receives.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EventsDlq.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for POST /api/events and GET /api/events/{id}
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}"
+  EventsTableName:
+    Description: DynamoDB table holding METADATA and AUDIT items
+    Value: !Ref EventsTable
+  EventsQueueUrl:
+    Description: Ingest -> Process queue
+    Value: !Ref EventsQueue
+  EventsDlqUrl:
+    Description: Dead-letter queue for poison messages
+    Value: !Ref EventsDlq
+  StateMachineArn:
+    Description: Pipeline state machine
+    Value: !Ref PipelineStateMachine
+  AlertTopicArn:
+    Description: SNS topic for completions and alarms - confirm the email subscription
+    Value: !Ref AlertTopic

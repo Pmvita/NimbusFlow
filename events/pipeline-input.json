@@ -1,0 +1,8 @@
+{
+  "eventId": "evt_5f2a9c",
+  "eventType": "order.created",
+  "payload": {
+    "orderId": "ord_8821",
+    "amount": 249
+  }
+}

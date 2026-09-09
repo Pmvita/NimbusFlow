@@ -1,0 +1,28 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /api/events",
+  "rawPath": "/api/events",
+  "rawQueryString": "",
+  "headers": {
+    "content-type": "application/json"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "local",
+    "domainName": "local.execute-api.us-east-1.amazonaws.com",
+    "http": {
+      "method": "POST",
+      "path": "/api/events",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "sam-local"
+    },
+    "requestId": "req-sample-1",
+    "routeKey": "POST /api/events",
+    "stage": "$default",
+    "time": "07/Sep/2026:14:32:10 +0000",
+    "timeEpoch": 1789137130000
+  },
+  "body": "{\"eventType\":\"order.created\",\"payload\":{\"orderId\":\"ord_8821\",\"amount\":249.00}}",
+  "isBase64Encoded": false
+}

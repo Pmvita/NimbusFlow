@@ -1,0 +1,28 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /api/events/{id}",
+  "rawPath": "/api/events/evt_5f2a9c",
+  "rawQueryString": "",
+  "headers": {},
+  "pathParameters": {
+    "id": "evt_5f2a9c"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "local",
+    "domainName": "local.execute-api.us-east-1.amazonaws.com",
+    "http": {
+      "method": "GET",
+      "path": "/api/events/evt_5f2a9c",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "127.0.0.1",
+      "userAgent": "sam-local"
+    },
+    "requestId": "req-sample-get",
+    "routeKey": "GET /api/events/{id}",
+    "stage": "$default",
+    "time": "07/Sep/2026:14:33:04 +0000",
+    "timeEpoch": 1789137184000
+  },
+  "isBase64Encoded": false
+}

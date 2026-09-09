@@ -1,0 +1,15 @@
+node_modules/
+.aws-sam/
+dist/
+coverage/
+
+# Local env / credentials — never commit these
+.env
+.env.*
+*.pem
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
