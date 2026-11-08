@@ -401,13 +401,29 @@ No `EVENT_BUS_NAME`. No AWS access keys in env — Lambda roles provide credenti
 
 ## ☁️ Deployment
 
+**Prerequisites on the machine:** AWS CLI, AWS SAM CLI, Docker (for `sam build`/`sam local`), and credentials (`aws sts get-caller-identity` should succeed). Create a **$1** budget first.
+
+`samconfig.toml` is committed with stack name `nimbusflow`, but **`NotificationEmail` is still the placeholder `you@example.com`**. Replace it with your address before deploy (or pass it during `--guided`).
+
 ```bash
+# 1. Fix the email in samconfig.toml (parameter_overrides)
+# 2. Validate + build + deploy
+sam validate --lint
 sam build
-sam deploy --guided    # first time
-sam deploy             # after that
+sam deploy --guided    # first time — saves real params into samconfig.toml
+sam deploy             # later deploys
 ```
 
-`template.yaml` creates the HTTP API, functions, state machine, SQS + DLQ, DynamoDB table, SNS topic, two alarms, and IAM roles.
+`template.yaml` creates the HTTP API, functions, state machine, SQS + DLQ, DynamoDB table, SNS topic, two alarms, and IAM roles. Confirm the SNS subscription email in your inbox.
+
+### Smoke test (after deploy)
+
+```bash
+npm test                                          # unit tests (no AWS)
+npm run smoke -- https://<api-id>.execute-api.<region>.amazonaws.com
+```
+
+The smoke script posts one event, polls GET until `stored`, then asserts a bad body returns `400`. Three requests total — not a load test.
 
 After a demo:
 
@@ -416,6 +432,8 @@ sam delete
 ```
 
 Rollback of a bad deploy is the previous CloudFormation stack event / `sam delete` + redeploy.
+
+**Status:** code + unit tests are ready; live `sam build` / `sam deploy` still need AWS CLI, SAM CLI, and real credentials on the deploy machine.
 
 ---
 

@@ -26,7 +26,7 @@ This checklist **is** the whole project. When every box is checked, the resume p
 
 ## 🏗️ Project Setup
 
-- [ ] Install AWS SAM CLI + Docker
+- [ ] Install AWS SAM CLI + Docker (not present on this machine at last polish)
 - [x] Initialize SAM + TypeScript project
 - [x] ESLint + Prettier
 - [x] Add MIT `LICENSE`
@@ -60,8 +60,8 @@ This checklist **is** the whole project. When every box is checked, the resume p
 
 - [x] SQS queue (ingest → process)
 - [x] SQS DLQ + redrive (max receive count, e.g. 3)
-- [x] SNS topic + your email subscription
-- [ ] Confirm a test email before wiring alarms
+- [x] SNS topic defined in template (email from deploy parameter)
+- [ ] Confirm a test email before wiring alarms (needs live deploy)
 
 ---
 
@@ -70,7 +70,7 @@ This checklist **is** the whole project. When every box is checked, the resume p
 - [x] ASL: Validate → Enrich → Store → Notify
 - [x] Retry + backoff on Store (transient DynamoDB)
 - [x] `Catch` on every state → mark `failed` + SNS
-- [ ] Run **a few** executions in the console — not a loop
+- [ ] Run **a few** executions in the console — not a loop (needs live deploy)
 
 ---
 
@@ -96,35 +96,53 @@ This checklist **is** the whole project. When every box is checked, the resume p
 - [x] Log groups with **7-day** retention
 - [x] Alarm: Lambda Errors > 0 → SNS
 - [x] Alarm: DLQ visible messages > 0 → SNS
+- [x] Explicitly **no** EventBridge / X-Ray (see `template.yaml` comments)
 
 ---
 
 ## 🧪 Testing & QA
 
-- [x] Unit tests per handler
-- [ ] One integration path: POST → wait → GET (script ready: `npm run smoke -- <api-url>`)
-- [ ] Failure checks: invalid POST → 400; force a process failure → failed status + email
+- [x] Unit tests per handler (`npm test` — 24 passing)
+- [x] Smoke script ready: `npm run smoke -- <api-url>` (`tests/integration/smoke.mjs`)
+- [ ] One live integration path: POST → wait → GET (requires deployed API URL)
+- [ ] Failure checks on live stack: invalid POST → 400; force a process failure → failed status + email
 
 ---
 
 ## 🚀 Deployment
 
-- [ ] `sam build` + `sam deploy --guided`
-- [ ] Save `samconfig.toml`
-- [ ] Smoke-test: one POST, one GET, one bad POST
-- [ ] Document rollback (`sam delete` / CloudFormation rollback)
+- [x] `samconfig.toml` committed (stack name `nimbusflow`, cached build, lint validate)
+- [ ] Replace placeholder `NotificationEmail=\"you@example.com\"` in `samconfig.toml` with your real address before deploy
+- [ ] Install AWS CLI + SAM CLI; configure credentials (`aws configure` or SSO)
+- [ ] `sam build` + `sam validate --lint` (blocked here: `sam` / `aws` not on PATH)
+- [ ] `sam deploy --guided` (first time) or `sam deploy` after `samconfig.toml` is real
+- [ ] Smoke-test: `npm run smoke -- https://<api-id>.execute-api.<region>.amazonaws.com`
+- [ ] Document rollback (`sam delete` / CloudFormation rollback) — see README Deployment
 - [ ] After the demo: `sam delete`
+
+### Exact deploy steps (when AWS + SAM are available)
+
+1. Create a **$1** AWS Budget with your email.
+2. Edit `samconfig.toml` → set `NotificationEmail` to that email (not `you@example.com`).
+3. `npm install`
+4. `sam validate --lint`
+5. `sam build`
+6. `sam deploy --guided` (first run) — accept prompts; confirm the SNS subscription email.
+7. Copy the HTTP API URL from stack outputs.
+8. `npm run smoke -- <api-url>`
+9. When finished demoing: `sam delete`
 
 ---
 
 ## 📄 Documentation
 
-- [x] README.md (architecture, $0 rules, API, IAM)
-- [x] TODO.md (this file — complete build list)
+- [x] README.md (architecture, $0 rules, API, IAM — no EventBridge/X-Ray claims)
+- [x] TODO.md (this file — honest deploy status)
 - [x] OpenAPI for POST + GET (`docs/openapi.yaml`)
 - [x] DynamoDB access-pattern note (PK/SK) (`docs/dynamodb-access-patterns.md`)
 - [x] CONTRIBUTING.md
+- [x] Smoke script usage documented in README
 
 ---
 
-_Spec 1.1 — last updated: 2026-09-07_
+_Spec 1.1 — last updated: 2026-11-08_
