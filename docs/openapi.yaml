@@ -1,0 +1,149 @@
+openapi: 3.1.0
+info:
+  title: NimbusFlow Events API
+  version: 1.1.0
+  description: >
+    NimbusFlow serverless event pipeline. POST an event to enqueue it (202);
+    GET it by id for status + audit trail. No authentication beyond the
+    API Gateway default URL. No custom domain.
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com
+    description: API Gateway default URL
+paths:
+  /api/events:
+    post:
+      summary: Enqueue an event
+      operationId: createEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestRequest"
+            examples:
+              order:
+                value:
+                  eventType: order.created
+                  payload:
+                    orderId: ord_8821
+                    amount: 249.0
+      responses:
+        "202":
+          description: Accepted and queued.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestResponse"
+        "400":
+          description: Invalid JSON or schema validation failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error.
+  /api/events/{id}:
+    get:
+      summary: Get event metadata + audit trail
+      operationId: getEvent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^evt_[0-9a-f]{6,32}$"
+      responses:
+        "200":
+          description: Metadata + audit rows.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventView"
+        "400":
+          description: Invalid id format.
+        "404":
+          description: No event with that id.
+        "500":
+          description: Server error.
+components:
+  schemas:
+    IngestRequest:
+      type: object
+      required: [eventType, payload]
+      properties:
+        eventType:
+          type: string
+          minLength: 3
+          maxLength: 120
+          pattern: '^[a-z][a-z0-9]*(\.[a-z][a-z0-9_]*)+$'
+          description: "<domain>.<action>, e.g. order.created"
+        payload:
+          type: object
+          minProperties: 1
+          additionalProperties: true
+          description: "Small JSON object (<= 16 KB). No files."
+    IngestResponse:
+      type: object
+      required: [eventId, status, acceptedAt]
+      properties:
+        eventId:
+          type: string
+          pattern: "^evt_[0-9a-f]{6,32}$"
+        status:
+          type: string
+          enum: [received]
+        acceptedAt:
+          type: string
+          format: date-time
+    EventView:
+      type: object
+      required: [eventId, eventType, status, createdAt, audit]
+      properties:
+        eventId:
+          type: string
+        eventType:
+          type: string
+        status:
+          type: string
+          enum: [received, processing, stored, failed]
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: integer
+          description: Unix seconds
+        enrichment:
+          type: object
+          additionalProperties: true
+          nullable: true
+        audit:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditRow"
+    AuditRow:
+      type: object
+      required: [stage, result, timestamp]
+      properties:
+        stage:
+          type: string
+          enum: [validate, enrich, store, notify, ingest, process, query]
+        result:
+          type: string
+        timestamp:
+          type: integer
+    ErrorResponse:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              path: { type: string }
+              message: { type: string }

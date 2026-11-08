@@ -121,9 +121,9 @@ This checklist **is** the whole project. When every box is checked, the resume p
 
 - [x] README.md (architecture, $0 rules, API, IAM)
 - [x] TODO.md (this file — complete build list)
-- [ ] OpenAPI for POST + GET
-- [ ] DynamoDB access-pattern note (PK/SK)
-- [ ] CONTRIBUTING.md
+- [x] OpenAPI for POST + GET (`docs/openapi.yaml`)
+- [x] DynamoDB access-pattern note (PK/SK) (`docs/dynamodb-access-patterns.md`)
+- [x] CONTRIBUTING.md
 
 ---
 
