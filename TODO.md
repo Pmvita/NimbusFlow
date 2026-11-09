@@ -27,7 +27,7 @@ This checklist **is** the whole project. When every box is checked, the resume p
 ## 🏗️ Project Setup
 
 - [x] Docker available for local builds
-- [ ] Install AWS SAM CLI *(winget MSI failed twice on this machine — exit 1618/1; install pending)*
+- [x] Install AWS SAM CLI *(v1.171.0 via winget `Amazon.SAM-CLI`)*
 - [x] Initialize SAM + TypeScript project
 - [x] ESLint + Prettier
 - [x] Add MIT `LICENSE`
@@ -116,9 +116,9 @@ This checklist **is** the whole project. When every box is checked, the resume p
 - [x] `samconfig.toml` committed (stack name `nimbusflow`, cached build, lint validate)
 - [ ] Replace placeholder `NotificationEmail=\"you@example.com\"` in `samconfig.toml` with your real address before deploy
 - [x] AWS CLI installed (`aws-cli/2.39.5`); configure credentials still pending (`aws sts get-caller-identity` fails)
-- [ ] Install SAM CLI successfully *(blocked: winget MSI)*
-- [ ] `sam build` + `sam validate --lint` *(blocked: no `sam` on PATH)*
-- [ ] `sam deploy --guided` (first time) or `sam deploy` after `samconfig.toml` is real *(blocked: no AWS credentials + no SAM)*
+- [x] Install SAM CLI successfully *(v1.171.0)*
+- [x] `sam build` + `sam validate --lint` *(validated + Build Succeeded 2026-11-08; ensure `node_modules/.bin` on PATH for esbuild)*
+- [ ] `sam deploy --guided` (first time) or `sam deploy` after `samconfig.toml` is real *(blocked: no AWS credentials)*
 - [ ] Smoke-test: `npm run smoke -- https://<api-id>.execute-api.<region>.amazonaws.com`
 - [x] Document rollback (`sam delete` / CloudFormation rollback) — see README Deployment
 - [ ] After the demo: `sam delete`
