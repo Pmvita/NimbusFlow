@@ -433,7 +433,7 @@ sam delete
 
 Rollback of a bad deploy is the previous CloudFormation stack event / `sam delete` + redeploy.
 
-**Status:** code + unit tests are ready; live `sam build` / `sam deploy` still need AWS CLI, SAM CLI, and real credentials on the deploy machine.
+**Status (2026-11-08):** code + unit tests ready (`npm test` — 24 passed). AWS CLI is installed; **SAM CLI install pending** (winget MSI failed on this machine). Live `sam validate` / `sam build` / `sam deploy` also need AWS credentials — do not claim a live API until those succeed. Skip deploy until SAM + creds + `$1` budget are in place.
 
 ---
 

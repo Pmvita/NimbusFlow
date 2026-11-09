@@ -19,19 +19,21 @@ This checklist **is** the whole project. When every box is checked, the resume p
 
 ## 💰 Cost guard (do this first)
 
-- [ ] Create a **$1** AWS Budget + email alert
-- [ ] Plan to `sam delete` after each demo window
+- [ ] Create a **$1** AWS Budget + email alert *(pending AWS credentials)*
+- [x] Plan to `sam delete` after each demo window *(documented below + README)*
 
 ---
 
 ## 🏗️ Project Setup
 
-- [ ] Install AWS SAM CLI + Docker (not present on this machine at last polish)
+- [x] Docker available for local builds
+- [ ] Install AWS SAM CLI *(winget MSI failed twice on this machine — exit 1618/1; install pending)*
 - [x] Initialize SAM + TypeScript project
 - [x] ESLint + Prettier
 - [x] Add MIT `LICENSE`
 - [x] Sample events under `events/`
 - [x] PR CI: `sam validate` + unit tests
+- [x] Unit tests green locally (`npm test` — 24 passed)
 
 ---
 
@@ -113,11 +115,12 @@ This checklist **is** the whole project. When every box is checked, the resume p
 
 - [x] `samconfig.toml` committed (stack name `nimbusflow`, cached build, lint validate)
 - [ ] Replace placeholder `NotificationEmail=\"you@example.com\"` in `samconfig.toml` with your real address before deploy
-- [ ] Install AWS CLI + SAM CLI; configure credentials (`aws configure` or SSO)
-- [ ] `sam build` + `sam validate --lint` (blocked here: `sam` / `aws` not on PATH)
-- [ ] `sam deploy --guided` (first time) or `sam deploy` after `samconfig.toml` is real
+- [x] AWS CLI installed (`aws-cli/2.39.5`); configure credentials still pending (`aws sts get-caller-identity` fails)
+- [ ] Install SAM CLI successfully *(blocked: winget MSI)*
+- [ ] `sam build` + `sam validate --lint` *(blocked: no `sam` on PATH)*
+- [ ] `sam deploy --guided` (first time) or `sam deploy` after `samconfig.toml` is real *(blocked: no AWS credentials + no SAM)*
 - [ ] Smoke-test: `npm run smoke -- https://<api-id>.execute-api.<region>.amazonaws.com`
-- [ ] Document rollback (`sam delete` / CloudFormation rollback) — see README Deployment
+- [x] Document rollback (`sam delete` / CloudFormation rollback) — see README Deployment
 - [ ] After the demo: `sam delete`
 
 ### Exact deploy steps (when AWS + SAM are available)
